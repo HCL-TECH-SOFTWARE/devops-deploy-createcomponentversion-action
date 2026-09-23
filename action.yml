@@ -15,7 +15,7 @@ inputs:
     required: false
     default: 'Created by following GitHub action: Create Component Version Composite Action'
   linkName:
-    description: 'Name of link to add to component version'
+    description: 'Name of link to add to component version. The link is only added when "link" is also specified.'
     required: false
     default: 'GitHub Composition Action Link Name'
   link:
@@ -28,28 +28,30 @@ inputs:
     description: 'Target path offset (the directory in the version files to which these files should be added)'
     required: false
   include:
-    description: 'An include file pattern for selecting files to add (may be repeated)'
+    description: 'Include file pattern(s) for selecting files to add. Separate multiple patterns with new lines.'
     required: false
   exclude:
-    description: 'An exclude file pattern for excluding files (may be repeated). Overrides includes.'
+    description: 'Exclude file pattern(s) for excluding files. Separate multiple patterns with new lines. Overrides includes.'
     required: false
   saveExecuteBits:
-    description: 'Saves execute bits for files.'
+    description: 'Saves execute bits for files ("true" or "false").'
     required: false
-    type: boolean
   versionProperties:
-    description: 'Properties to set on the component version.  Each property must name name:value:secure.  If you have multiple properties, then they should be separated by a new line character'
+    description: 'Properties to set on the component version.  Each property must be in the format name:value:secure.  If you have multiple properties, then they should be separated by a new line character'
+    required: false
+  serverUrl:
+    description: 'Full DevOps Deploy server URL, e.g. https://deploy.example.com:8443. Overrides urlType, hostname and port.'
     required: false
   urlType:
     description: 'URL protocol to use to connect to DevOps Deploy hostname'
     required: false
     default: 'https:'
   hostname:
-    description: 'DevOps Deploy hostname'
-    required: true
+    description: 'DevOps Deploy hostname. Required unless serverUrl is specified.'
+    required: false
   port:
-    description: 'port'
-    required: true
+    description: 'DevOps Deploy port'
+    required: false
     default: '8443'
   username:
     description: 'DevOps Deploy username'
@@ -57,93 +59,198 @@ inputs:
   password:
     description: 'DevOps Deploy password'
     required: false
-    secret: true
   authToken:
     description: 'DevOps Deploy authentication token'
     required: false
-    secret: true
+  udclientSource:
+    description: 'Where to get the udclient: "server" downloads it from the DevOps Deploy server so it matches the server version, falling back to the bundled copy if the download fails; "bundled" always uses the copy included in this action.'
+    required: false
+    default: 'server'
+outputs:
+  version-id:
+    description: 'ID of the created component version'
+    value: ${{ steps.create-component-version.outputs.version-id }}
+  udclient-source:
+    description: 'Where the udclient came from: "server" or "bundled"'
+    value: ${{ steps.udclient-install.outputs.udclient-source }}
 runs:
   using: "composite"
 
   steps:
-    # Download udclient package and command shell scripts from composite action github repository
-    - uses: actions/checkout@v4
-      with:
-        repository: jwcarmichael12/test-composite-action
-        sparse-checkout: |
-          artifacts/devops-deploy-client.zip
-          scripts/addVersionFiles.sh
-          scripts/addVersionProperties.sh
-        sparse-checkout-cone-mode: false
-        path: deploy
+    # Validate inputs and build the server URL used by udclient
+    - name: Validate inputs
+      id: validate
+      shell: bash
+      run: |
+        if [ -n "$SERVER_URL" ]; then
+          web_url="$SERVER_URL"
+        elif [ -n "$DEPLOY_HOSTNAME" ]; then
+          web_url="${URL_TYPE}//${DEPLOY_HOSTNAME}:${DEPLOY_PORT}"
+        else
+          echo "::error::Either serverUrl or hostname must be specified."
+          exit 1
+        fi
+        if [ -z "$DS_AUTH_TOKEN" ] && { [ -z "$DS_USERNAME" ] || [ -z "$DS_PASSWORD" ]; }; then
+          echo "::error::Either authToken or username and password must be specified."
+          exit 1
+        fi
+        if [ "$UDCLIENT_SOURCE" != "server" ] && [ "$UDCLIENT_SOURCE" != "bundled" ]; then
+          echo "::error::udclientSource must be \"server\" or \"bundled\"."
+          exit 1
+        fi
+        echo "web-url=${web_url%/}" >> "$GITHUB_OUTPUT"
+        echo "java-home=$JAVA_HOME" >> "$GITHUB_OUTPUT"
+      env:
+        SERVER_URL: ${{ inputs.serverUrl }}
+        URL_TYPE: ${{ inputs.urlType }}
+        DEPLOY_HOSTNAME: ${{ inputs.hostname }}
+        DEPLOY_PORT: ${{ inputs.port }}
+        DS_AUTH_TOKEN: ${{ inputs.authToken }}
+        DS_USERNAME: ${{ inputs.username }}
+        DS_PASSWORD: ${{ inputs.password }}
+        UDCLIENT_SOURCE: ${{ inputs.udclientSource }}
 
     # Setup java environment needed to run the udclient
-    - uses: actions/setup-java@v4
+    - uses: actions/setup-java@v5
+      id: setup-java
       with:
-        distribution: 'adopt-openj9' # See 'Supported distributions' for available options
+        distribution: 'semeru' # IBM Semeru Runtime (OpenJ9)
         java-version: '11'
 
-    # Expand the udclient package to access the executable
+    # setup-java exports JAVA_HOME for the rest of the job; restore the caller's value.
+    # udclient steps below get this Java through their own step env instead.
+    - name: Restore JAVA_HOME
+      shell: bash
+      run: echo "JAVA_HOME=$ORIGINAL_JAVA_HOME" >> "$GITHUB_ENV"
+      env:
+        ORIGINAL_JAVA_HOME: ${{ steps.validate.outputs.java-home }}
+
+    # Expand the udclient package into the runner temp directory so the caller's workspace is untouched.
+    # By default the udclient is downloaded from the server so it matches the server version.
     - name: Install udclient
       id: udclient-install
-      run: unzip deploy/artifacts/devops-deploy-client.zip
       shell: bash
-
-    # Setup global environment variables used by udclient
-    - name: Set global environment variables.
-      id: set-env-variables
       run: |
-        if [ ! -z ${{ inputs.authtoken }} ]; then echo "DS_AUTH_TOKEN=${{ inputs.authtoken }}" >> $GITHUB_ENV; fi &&
-        if [ ! -z ${{ inputs.username }} ]; then echo "DS_USERNAME=${{ inputs.username }}" >> $GITHUB_ENV; fi &&
-        if [ ! -z ${{ inputs.password }} ]; then echo "DS_PASSWORD=${{ inputs.password }}" >> $GITHUB_ENV; fi &&
-        echo "DS_WEB_URL=${{ inputs.urlType }}//${{ inputs.hostname }}:${{ inputs.port }}" >> $GITHUB_ENV
-      shell: bash
+        install_dir=$(mktemp -d "$RUNNER_TEMP/devops-deploy-client.XXXXXX")
+        source="bundled"
+        if [ "$UDCLIENT_SOURCE" = "server" ]; then
+          curl_opts=(--fail --silent --show-error --location --max-time 120)
+          # Follow the same TLS setting as the udclient
+          if [ "$(echo "$UC_TLS_VERIFY_CERTS" | tr '[:upper:]' '[:lower:]')" = "false" ]; then
+            curl_opts+=(--insecure)
+          fi
+          if curl "${curl_opts[@]}" -o "$install_dir/udclient.zip" "$DS_WEB_URL/tools/udclient.zip" \
+            && unzip -q -o "$install_dir/udclient.zip" -d "$install_dir" \
+            && [ -f "$install_dir/udclient/udclient" ]; then
+            source="server"
+          else
+            echo "::warning::Could not download the udclient from $DS_WEB_URL/tools/udclient.zip. Using the udclient bundled with this action, which may not match the server version."
+            rm -rf "${install_dir:?}/udclient"
+          fi
+          rm -f "$install_dir/udclient.zip"
+        fi
+        if [ "$source" = "bundled" ]; then
+          unzip -q -o "$GITHUB_ACTION_PATH/artifacts/devops-deploy-client.zip" -d "$install_dir"
+        fi
+        chmod +x "$install_dir/udclient/udclient"
+        echo "Using udclient from: $source"
+        echo "udclient-home=$install_dir/udclient" >> "$GITHUB_OUTPUT"
+        echo "udclient-source=$source" >> "$GITHUB_OUTPUT"
+      env:
+        UDCLIENT_SOURCE: ${{ inputs.udclientSource }}
+        DS_WEB_URL: ${{ steps.validate.outputs.web-url }}
 
     # Create component version
     - name: Create component version
       id: create-component-version
-      run: udclient/udclient createVersion -component "${{ inputs.component }}" -name "${{ inputs.versionname }}"  -description "${{ inputs.description }}" --importing true
       shell: bash
+      run: |
+        result=$("$GITHUB_ACTION_PATH/scripts/udclient.sh" createVersion -component "$COMPONENT" -name "$VERSION" -description "$DESCRIPTION" --importing true)
+        echo "$result"
+        version_id=$(jq -r '.id // empty' <<< "$result" 2>/dev/null || true)
+        echo "version-id=$version_id" >> "$GITHUB_OUTPUT"
+      env:
+        JAVA_HOME: ${{ steps.setup-java.outputs.path }}
+        UDCLIENT_HOME: ${{ steps.udclient-install.outputs.udclient-home }}
+        DS_WEB_URL: ${{ steps.validate.outputs.web-url }}
+        DS_AUTH_TOKEN: ${{ inputs.authToken }}
+        DS_USERNAME: ${{ inputs.username }}
+        DS_PASSWORD: ${{ inputs.password }}
+        COMPONENT: ${{ inputs.component }}
+        VERSION: ${{ inputs.versionname }}
+        DESCRIPTION: ${{ inputs.description }}
 
     # Add Version Link if one is specified
     - name: Add component version link
       id: add-version-link
       if: inputs.linkName && inputs.link
-      run: udclient/udclient addVersionLink -component "${{ inputs.component }}" -version "${{ inputs.versionname }}" -linkName "${{ inputs.linkName }}" -link "${{ inputs.link }}"
       shell: bash
+      run: '"$GITHUB_ACTION_PATH/scripts/udclient.sh" addVersionLink -component "$COMPONENT" -version "$VERSION" -linkName "$LINK_NAME" -link "$LINK"'
+      env:
+        JAVA_HOME: ${{ steps.setup-java.outputs.path }}
+        UDCLIENT_HOME: ${{ steps.udclient-install.outputs.udclient-home }}
+        DS_WEB_URL: ${{ steps.validate.outputs.web-url }}
+        DS_AUTH_TOKEN: ${{ inputs.authToken }}
+        DS_USERNAME: ${{ inputs.username }}
+        DS_PASSWORD: ${{ inputs.password }}
+        COMPONENT: ${{ inputs.component }}
+        VERSION: ${{ inputs.versionname }}
+        LINK_NAME: ${{ inputs.linkName }}
+        LINK: ${{ inputs.link }}
 
     # Add Version Files if specified
     - name: Add component version files
       id: add-version-files
-      if: ${{ inputs.base }}
-      run: |
-        deploy/scripts/addVersionFiles.sh
+      if: inputs.base
       shell: bash
+      run: '"$GITHUB_ACTION_PATH/scripts/addVersionFiles.sh"'
       env:
-        FILES_CMD: "udclient/udclient"
-        FILES_COMPONENTNAME: "${{ inputs.component }}"
-        FILES_VERSIONNAME: "${{ inputs.versionname }}"
-        FILES_BASE: "${{ inputs.base }}"
-        FILES_OFFSET: "${{ inputs.offset }}"
-        FILES_INCLUDE: "${{ inputs.include }}"
-        FILES_EXCLUDE: "${{ inputs.exclude }}"
+        JAVA_HOME: ${{ steps.setup-java.outputs.path }}
+        UDCLIENT_HOME: ${{ steps.udclient-install.outputs.udclient-home }}
+        DS_WEB_URL: ${{ steps.validate.outputs.web-url }}
+        DS_AUTH_TOKEN: ${{ inputs.authToken }}
+        DS_USERNAME: ${{ inputs.username }}
+        DS_PASSWORD: ${{ inputs.password }}
+        FILES_CMD: ${{ github.action_path }}/scripts/udclient.sh
+        FILES_COMPONENTNAME: ${{ inputs.component }}
+        FILES_VERSIONNAME: ${{ inputs.versionname }}
+        FILES_BASE: ${{ inputs.base }}
+        FILES_OFFSET: ${{ inputs.offset }}
+        FILES_INCLUDE: ${{ inputs.include }}
+        FILES_EXCLUDE: ${{ inputs.exclude }}
         FILES_SAVEEXECUTEBITS: ${{ inputs.saveExecuteBits }}
 
     # Add Version Properties if specified
     - name: Add component version properties
       id: add-version-properties
-      if: ${{ inputs.versionProperties }}
-      run: |
-        deploy/scripts/addVersionProperties.sh
+      if: inputs.versionProperties
       shell: bash
+      run: '"$GITHUB_ACTION_PATH/scripts/addVersionProperties.sh"'
       env:
-        VERSION_PROPERTIES_CMD: "udclient/udclient"
-        VERSION_PROPERTIES_COMPONENTNAME: "${{ inputs.component }}"
-        VERSION_PROPERTIES_VERSIONNAME: "${{ inputs.versionname }}"
-        VERSION_PROPERTIES: "${{ inputs.versionProperties }}"
+        JAVA_HOME: ${{ steps.setup-java.outputs.path }}
+        UDCLIENT_HOME: ${{ steps.udclient-install.outputs.udclient-home }}
+        DS_WEB_URL: ${{ steps.validate.outputs.web-url }}
+        DS_AUTH_TOKEN: ${{ inputs.authToken }}
+        DS_USERNAME: ${{ inputs.username }}
+        DS_PASSWORD: ${{ inputs.password }}
+        VERSION_PROPERTIES_CMD: ${{ github.action_path }}/scripts/udclient.sh
+        VERSION_PROPERTIES_COMPONENTNAME: ${{ inputs.component }}
+        VERSION_PROPERTIES_VERSIONNAME: ${{ inputs.versionname }}
+        VERSION_PROPERTIES: ${{ inputs.versionProperties }}
 
-    # Tell devops deploy server that component version creation is complete
+    # Tell devops deploy server that component version creation is complete.
+    # Runs even if adding the link, files or properties failed so the version is not left in the importing state.
     - name: Finish Importing
       id: finish-importing
-      run: udclient/udclient finishedImporting -component "${{ inputs.component }}" -version "${{ inputs.versionname }}"
+      if: always() && steps.create-component-version.outcome == 'success'
       shell: bash
+      run: '"$GITHUB_ACTION_PATH/scripts/udclient.sh" finishedImporting -component "$COMPONENT" -version "$VERSION"'
+      env:
+        JAVA_HOME: ${{ steps.setup-java.outputs.path }}
+        UDCLIENT_HOME: ${{ steps.udclient-install.outputs.udclient-home }}
+        DS_WEB_URL: ${{ steps.validate.outputs.web-url }}
+        DS_AUTH_TOKEN: ${{ inputs.authToken }}
+        DS_USERNAME: ${{ inputs.username }}
+        DS_PASSWORD: ${{ inputs.password }}
+        COMPONENT: ${{ inputs.component }}
+        VERSION: ${{ inputs.versionname }}
