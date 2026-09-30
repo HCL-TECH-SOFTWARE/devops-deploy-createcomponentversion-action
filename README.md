@@ -26,6 +26,7 @@ This action uses the DevOps Deploy udclient cli to communicate with the DevOps D
 * `username` (username:password or authToken is required): Username used to authenticate with the DevOps Deploy server.
 * `password` (username:password or authToken is required): Password used to authenticate with the DevOps Deploy server.
 * `authToken` (username:password or authToken is required): Authentication token used to authenticate with the DevOps Deploy server.  This will override the username:password if specified.
+* `javaVersion` (optional): Java version to install for running the udclient (IBM Semeru Runtime). Defaults to 21.
 * `udclientSource` (optional): `server` (default) downloads the udclient from the DevOps Deploy server (`/tools/udclient.zip`) so it matches \
                                the server version, falling back to the copy bundled with this action if the download fails. \
                                `bundled` always uses the bundled copy.
@@ -39,8 +40,9 @@ Always pass `password` and `authToken` from [encrypted secrets](https://docs.git
 
 ## Notes
 
-* The action installs Java 11 (IBM Semeru) with `actions/setup-java` to run the udclient. It restores your job's `JAVA_HOME`
-  afterwards, but `setup-java` also adds its Java to the job's `PATH`, so later steps calling `java` directly will use Java 11.
+* The action installs Java 21 (IBM Semeru) with `actions/setup-java` to run the udclient; use `javaVersion` to change it.
+  It restores your job's `JAVA_HOME` afterwards, but `setup-java` also adds its Java to the job's `PATH`, so later steps
+  calling `java` directly will use that version.
   `actions/setup-java@v5` requires GitHub Actions runner v2.327.1 or later on self-hosted runners.
 * By default the udclient is downloaded from your DevOps Deploy server. The download uses the same TLS setting as the udclient
   (`UC_TLS_VERIFY_CERTS`). If it fails, a warning is shown and the bundled udclient is used instead.

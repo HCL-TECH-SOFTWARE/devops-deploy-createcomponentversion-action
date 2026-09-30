@@ -66,6 +66,10 @@ inputs:
     description: 'Where to get the udclient: "server" downloads it from the DevOps Deploy server so it matches the server version, falling back to the bundled copy if the download fails; "bundled" always uses the copy included in this action.'
     required: false
     default: 'server'
+  javaVersion:
+    description: 'Java version to install for running the udclient (IBM Semeru Runtime). Must be supported by the udclient.'
+    required: false
+    default: '21'
 outputs:
   version-id:
     description: 'ID of the created component version'
@@ -115,7 +119,7 @@ runs:
       id: setup-java
       with:
         distribution: 'semeru' # IBM Semeru Runtime (OpenJ9)
-        java-version: '11'
+        java-version: ${{ inputs.javaVersion }}
 
     # setup-java exports JAVA_HOME for the rest of the job; restore the caller's value.
     # udclient steps below get this Java through their own step env instead.
