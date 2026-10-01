@@ -45,7 +45,9 @@ Always pass `password` and `authToken` from [encrypted secrets](https://docs.git
   calling `java` directly will use that version.
   `actions/setup-java@v5` requires GitHub Actions runner v2.327.1 or later on self-hosted runners.
 * By default the udclient is downloaded from your DevOps Deploy server. The download uses the same TLS setting as the udclient
-  (`UC_TLS_VERIFY_CERTS`). If it fails, a warning is shown and the bundled udclient is used instead.
+  (`UC_TLS_VERIFY_CERTS`). If the server can't be reached at all (unknown host, connection refused, or no response within
+  20 seconds), the action fails with an error. If the server responds but the download fails for another reason (for example
+  a 404 or a certificate error), a warning is shown and the bundled udclient is used instead.
 * The udclient is installed in the runner temp directory, so nothing is written to your workspace and the action can be used
   more than once in a job.
 * If adding the link, files or properties fails, the version is still marked as finished importing and the job fails.
