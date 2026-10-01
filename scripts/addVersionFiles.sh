@@ -12,72 +12,73 @@
 #
 # The following environment variables can be OPTIONALLY set prior to invocation of the script:
 # FILES_OFFSET
-# FILES_INCLUDE
-# FILES_EXCLUDE
+# FILES_INCLUDE (new-line separated patterns)
+# FILES_EXCLUDE (new-line separated patterns)
 # FILES_SAVEEXECUTEBITS
 
 #set -x
-base_cmd=""
 
 # Create the command to execute
-if [ -z $FILES_CMD ]
+if [ -z "$FILES_CMD" ]
 then
   echo "udclient command not specified.  Exiting."
   exit 1
-else
-  base_cmd="\"$FILES_CMD\" addVersionFiles"
 fi
+cmd=("$FILES_CMD" addVersionFiles)
 
 # Specify component name
-if [ -z $FILES_COMPONENTNAME ]
+if [ -z "$FILES_COMPONENTNAME" ]
 then
   echo "Component name not specified.  Exiting."
   exit 1
-else
-  base_cmd+=" -component \"$FILES_COMPONENTNAME\""
 fi
+cmd+=(-component "$FILES_COMPONENTNAME")
 
 # Specify component version name
 if [ -z "$FILES_VERSIONNAME" ]
 then
   echo "Version name not specified.  Exiting."
   exit 1
-else
-  base_cmd+=" -version \"$FILES_VERSIONNAME\""
 fi
+cmd+=(-version "$FILES_VERSIONNAME")
 
 # Specify local path
-if [ -z $FILES_BASE ]
+if [ -z "$FILES_BASE" ]
 then
   echo "No base files specified. Exiting."
   exit 1
-else
-  base_cmd+=" -base \"$FILES_BASE\""
 fi
+cmd+=(-base "$FILES_BASE")
 
 # Specify target path
-if [ ! -z "$FILES_OFFSET" ]
+if [ -n "$FILES_OFFSET" ]
 then
-  base_cmd+=" -offset \"$FILES_OFFSET\""
+  cmd+=(-offset "$FILES_OFFSET")
 fi
 
-# Specify include pattern(s)
-if [ ! -z $FILES_INCLUDE ]
-then
-  base_cmd+=" -include \"$FILES_INCLUDE\""
-fi
+# Specify include pattern(s), one per line
+while IFS= read -r pattern
+do
+  if [ -n "$pattern" ]
+  then
+    cmd+=(-include "$pattern")
+  fi
+done <<< "$FILES_INCLUDE"
 
-# Specify exclude pattern(s)
-if [ ! -z $FILES_EXCLUDE ]
-then
-  base_cmd+=" -exclude \"$FILES_EXCLUDE\""
-fi
+# Specify exclude pattern(s), one per line
+while IFS= read -r pattern
+do
+  if [ -n "$pattern" ]
+  then
+    cmd+=(-exclude "$pattern")
+  fi
+done <<< "$FILES_EXCLUDE"
 
 # Specify whether or not to save execute bits on the files
-if [ ! -z $FILES_SAVEEXECUTEBITS ]
+if [ -n "$FILES_SAVEEXECUTEBITS" ]
 then
-  base_cmd+=" -saveExecuteBits \"$FILES_SAVEEXECUTEBITS\""
+  cmd+=(-saveExecuteBits "$FILES_SAVEEXECUTEBITS")
 fi
 
 # Invoke the udclient to add version files to the component version
-eval $base_cmd
+"${cmd[@]}"
