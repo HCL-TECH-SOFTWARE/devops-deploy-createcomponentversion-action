@@ -18,7 +18,9 @@ This action uses the DevOps Deploy udclient cli to communicate with the DevOps D
 * `saveExecuteBits` (optional): `true` or `false`. Whether or not to save execute bits for files.
 * `versionProperties` (optional): Properties to set on the component version.  Each property must be in the following format: \
                                   name:value:secure, where secure is `true` or `false`.  The value may contain `:` characters. \
-                                  If you have multiple properties, then they should be separated by a new-line character.
+                                  If you have multiple properties, then they should be separated by a new-line character. \
+                                  Each property must fit on one line, so don't use multi-line values such as a full commit \
+                                  message; use its first line instead (see the example below).
 * `serverUrl` (optional): Full URL of the DevOps Deploy server, including `https://` (or `http://`), e.g. `https://deploy.example.com:8443`. Overrides `urlType`, `hostname` and `port`.
 * `urlType` (optional): URL protocol to use to connect to DevOps Deploy hostname.  Default is "https:".
 * `hostname` (required unless `serverUrl` is specified): Hostname or IP of the DevOps Deploy server.
@@ -72,9 +74,16 @@ jobs:
       - name: Create artifacts to add to component
         id: create-artifacts
         run: mkdir /tmp/artifacts && date > /tmp/artifacts/date.txt
-      - name: Set short_commit_id
+      # Commit messages can span several lines; use only the first line (the title) in
+      # single-line values such as the version name and version properties.
+      - name: Set short_commit_id and commit_title
         id: vars
-        run: echo "short_commit_id=$(echo ${{ github.event.head_commit.id }} | cut -c1-7)" >> "$GITHUB_ENV"
+        env:
+          COMMIT_ID: ${{ github.event.head_commit.id }}
+          COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
+        run: |
+          echo "short_commit_id=${COMMIT_ID:0:7}" >> "$GITHUB_ENV"
+          echo "commit_title=${COMMIT_MESSAGE%%$'\n'*}" >> "$GITHUB_ENV"
       - name: Set optional global flags for udclient command
         id: set-optional-global-flags
         run: echo "UC_TLS_VERIFY_CERTS=false" >> "$GITHUB_ENV"
@@ -82,18 +91,17 @@ jobs:
         id: create-version
         with:
           component: 'MyComp'
-          versionname: '${{ env.short_commit_id }}:${{ github.event.head_commit.message }}'
+          versionname: '${{ env.short_commit_id }}:${{ env.commit_title }}'
           description: 'Commit ID: ${{ github.event.head_commit.id }} Repository URL: ${{ github.repositoryUrl }}'
           linkName: 'Git Commit'
           link: '${{ github.server_url }}/${{ github.repository }}/commit/${{ github.event.head_commit.id }}'
           base: /tmp/artifacts
           offset: demo/files
           versionProperties: |-
-            TestProperty1:DemoValue1:false
+            CommitTitle:${{ env.commit_title }}:false
             TestProperty2:DemoValue2:false
             TestProperty3:DemoValue3:true
-          hostname: 'DevOps_Deploy_Server_hostname'
-          port: '8443'
+          serverUrl: 'https://deploy.example.com:8443'
           authToken: '${{ secrets.DEVOPS_DEPLOY_AUTHTOKEN }}'
       - name: Show new version ID
         run: echo "Created version ${{ steps.create-version.outputs.version-id }}"

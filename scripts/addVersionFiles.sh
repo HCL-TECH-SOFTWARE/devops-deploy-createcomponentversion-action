@@ -59,6 +59,7 @@ fi
 # Specify include pattern(s), one per line
 while IFS= read -r pattern
 do
+  pattern="${pattern%$'\r'}"
   if [ -n "$pattern" ]
   then
     cmd+=(-include "$pattern")
@@ -68,6 +69,7 @@ done <<< "$FILES_INCLUDE"
 # Specify exclude pattern(s), one per line
 while IFS= read -r pattern
 do
+  pattern="${pattern%$'\r'}"
   if [ -n "$pattern" ]
   then
     cmd+=(-exclude "$pattern")
