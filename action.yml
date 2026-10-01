@@ -40,7 +40,7 @@ inputs:
     description: 'Properties to set on the component version.  Each property must be in the format name:value:secure.  If you have multiple properties, then they should be separated by a new line character'
     required: false
   serverUrl:
-    description: 'Full DevOps Deploy server URL, e.g. https://deploy.example.com:8443. Overrides urlType, hostname and port.'
+    description: 'Full DevOps Deploy server URL including https:// or http://, e.g. https://deploy.example.com:8443. Overrides urlType, hostname and port.'
     required: false
   urlType:
     description: 'URL protocol to use to connect to DevOps Deploy hostname'
@@ -88,10 +88,16 @@ runs:
       run: |
         if [ -n "$SERVER_URL" ]; then
           web_url="$SERVER_URL"
+          url_hint="serverUrl must start with https:// or http://"
         elif [ -n "$DEPLOY_HOSTNAME" ]; then
           web_url="${URL_TYPE}//${DEPLOY_HOSTNAME}:${DEPLOY_PORT}"
+          url_hint="urlType must be https: or http:"
         else
           echo "::error::Either serverUrl or hostname must be specified."
+          exit 1
+        fi
+        if [[ ! "$web_url" =~ ^https?://[^/]+ ]]; then
+          echo "::error::$url_hint (server URL was \"$web_url\")."
           exit 1
         fi
         if [ -z "$DS_AUTH_TOKEN" ] && { [ -z "$DS_USERNAME" ] || [ -z "$DS_PASSWORD" ]; }; then

@@ -19,7 +19,7 @@ This action uses the DevOps Deploy udclient cli to communicate with the DevOps D
 * `versionProperties` (optional): Properties to set on the component version.  Each property must be in the following format: \
                                   name:value:secure, where secure is `true` or `false`.  The value may contain `:` characters. \
                                   If you have multiple properties, then they should be separated by a new-line character.
-* `serverUrl` (optional): Full URL of the DevOps Deploy server, e.g. `https://deploy.example.com:8443`. Overrides `urlType`, `hostname` and `port`.
+* `serverUrl` (optional): Full URL of the DevOps Deploy server, including `https://` (or `http://`), e.g. `https://deploy.example.com:8443`. Overrides `urlType`, `hostname` and `port`.
 * `urlType` (optional): URL protocol to use to connect to DevOps Deploy hostname.  Default is "https:".
 * `hostname` (required unless `serverUrl` is specified): Hostname or IP of the DevOps Deploy server.
 * `port` (optional): Port number of the DevOps Deploy server. Defaults to 8443.
