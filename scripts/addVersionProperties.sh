@@ -46,10 +46,19 @@ fi
 # Loop through new-line delineated component version properties and invoke CLI for each property definition.
 # Each line is name:value:secure. The name is everything before the first ':' and the secure setting is
 # everything after the last ':', so the value itself may contain ':' (e.g. URLs).
+# All lines are checked before any property is set, so a mistake leaves the version unchanged.
+# Error messages name the property and line but never print the value, which may be a secret.
+names=()
+values=()
+secures=()
+line_number=0
 while IFS= read -r line
 do
+    line_number=$((line_number + 1))
+    # Ignore Windows line endings
+    line="${line%$'\r'}"
     # Skip blank lines
-    if [ -z "$line" ]
+    if [[ "$line" =~ ^[[:space:]]*$ ]]
     then
       continue
     fi
@@ -59,18 +68,31 @@ do
     value="${value%:*}"
     if [ -z "$key" ]
     then
-      echo "Property name not specified.  Exiting."
+      echo "::error::The property on line $line_number has no name. Each line must be in the format name:value:secure."
       exit 1
     fi
-    if [ "$key" = "$line" ] || [ "$value" = "${line#*:}" ] || [ -z "$value" ]
+    # Fewer than two ':' separators means the value or the secure setting is missing
+    if [ "$key" = "$line" ] || [ "$value" = "${line#*:}" ]
     then
-      echo "Property value not specified for property '$key'.  Exiting."
+      echo "::error::Property '$key' (line $line_number) must be in the format name:value:secure. If the value comes from a multi-line expression such as a commit message, use only its first line."
+      exit 1
+    fi
+    if [ -z "$value" ]
+    then
+      echo "::error::Property '$key' (line $line_number) has an empty value."
       exit 1
     fi
     if [ "$secure" != "true" ] && [ "$secure" != "false" ]
     then
-      echo "Property secure setting for property '$key' must be true or false.  Exiting."
+      echo "::error::Property '$key' (line $line_number) must end with :true or :false (the secure setting)."
       exit 1
     fi
-    "${base_cmd[@]}" -name "$key" -value "$value" -isSecure "$secure" || exit 1
+    names+=("$key")
+    values+=("$value")
+    secures+=("$secure")
 done <<< "$VERSION_PROPERTIES"
+
+for i in "${!names[@]}"
+do
+    "${base_cmd[@]}" -name "${names[$i]}" -value "${values[$i]}" -isSecure "${secures[$i]}" || exit 1
+done
